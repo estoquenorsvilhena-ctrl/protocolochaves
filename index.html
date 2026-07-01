@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Protocolo de Chaves</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css" />
+<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0f1117; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ── defaults ── */
+const DEF_KEYS = [
+  { id:1, name:"Carrinho 01",   user:null, since:null },
+  { id:2, name:"Carrinho 02",   user:null, since:null },
+  { id:3, name:"Ferramentaria", user:null, since:null },
+  { id:4, name:"Ecoponto",      user:null, since:null },
+];
+
+/* ── localStorage keys ── */
+const SK = "chaves_keys";
+const SL = "chaves_log";
+const SN = "chaves_nid";
+
+/* ── helpers ── */
+const fmt = (d) =>
+  d.toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit", second:"2-digit" }) +
+  " · " + d.toLocaleDateString("pt-BR");
+
+function load() {
+  try {
+    return {
+      keys: JSON.parse(localStorage.getItem(SK)) || DEF_KEYS,
+      log:  JSON.parse(localStorage.getItem(SL)) || [],
+      nid:  parseInt(localStorage.getItem(SN))   || 5,
+    };
+  } catch(_) {
+    return { keys: DEF_KEYS, log: [], nid: 5 };
+  }
+}
+
+/* ════════════════════════════ APP ════════════════════════════ */
+function App() {
+  const init = load();
+  const [keys,  setKeys]  = useState(init.keys);
+  const [log,   setLog]   = useState(init.log);
+  const [nid,   setNid]   = useState(init.nid);
+  const [saved, setSaved] = useState(false);
+
+  const [modal,         setModal]         = useState(null);
+  const [active,        setActive]        = useState(null);
+  const [pendingRemove, setPendingRemove] = useState(null);
+  const [inputVal,      setInputVal]      = useState("");
+  const [inputErr,      setInputErr]      = useState(false);
+
+  const inputRef  = useRef(null);
+  const saveTimer = useRef(null);
+
+  /* ── persist ── */
+  const persist = useCallback((k, l, n) => {
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      try {
+        localStorage.setItem(SK, JSON.stringify(k));
+        localStorage.setItem(SL, JSON.stringify(l));
+        localStorage.setItem(SN, String(n));
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2200);
+      } catch(_) {}
+    }, 150);
+  }, []);
+
+  /* ── stats ── */
+  const avail = keys.filter(k => !k.user).length;
+  const inuse = keys.filter(k => !!k.user).length;
+
+  /* ── modal helpers ── */
+  const openModal = (type, extra = {}) => {
+    setModal(type);
+    setInputVal("");
+    setInputErr(false);
+    setActive(extra.key ?? null);
+    if (extra.removeId != null) setPendingRemove(extra.removeId);
+    setTimeout(() => inputRef.current?.focus(), 120);
+  };
+  const closeModal = () => setModal(null);
+
+  useEffect(() => {
+    const h = e => { if (e.key === "Escape") closeModal(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
+
+  /* ── actions ── */
+  const doCheckout = () => {
+    const u = inputVal.trim();
+    if (!u) { setInputErr(true); inputRef.current?.focus(); return; }
+    const t = fmt(new Date());
+    const newKeys = keys.map(k => k.id === active.id ? { ...k, user:u, since:t } : k);
+    const newLog  = [...log, { key:active.name, user:u, time:t, action:"retirada" }];
+    setKeys(newKeys); setLog(newLog);
+    persist(newKeys, newLog, nid);
+    closeModal();
+  };
+
+  const doReturn = () => {
+    const u = inputVal.trim();
+    if (!u) { setInputErr(true); inputRef.current?.focus(); return; }
+    const t = fmt(new Date());
+    const newKeys = keys.map(k => k.id === active.id ? { ...k, user:null, since:null } : k);
+    const newLog  = [...log, { key:active.name, user:u, time:t, action:"devolução" }];
+    setKeys(newKeys); setLog(newLog);
+    persist(newKeys, newLog, nid);
+    closeModal();
+  };
+
+  const doAdd = () => {
+    const n = inputVal.trim();
+    if (!n) { setInputErr(true); inputRef.current?.focus(); return; }
+    const newKeys = [...keys, { id:nid, name:n, user:null, since:null }];
+    const newNid  = nid + 1;
+    setKeys(newKeys); setNid(newNid);
+    persist(newKeys, log, newNid);
+    closeModal();
+  };
+
+  const doRemove = () => {
+    const newKeys = keys.filter(k => k.id !== pendingRemove);
+    setKeys(newKeys);
+    persist(newKeys, log, nid);
+    closeModal();
+  };
+
+  const doClear = () => {
+    setLog([]);
+    persist(keys, [], nid);
+    closeModal();
+  };
+
+  /* ════ RENDER ════ */
+  return (
+    <div style={s.app}>
+
+      {/* Topbar */}
+      <div style={s.topbar}>
+        <div style={s.topbarLogo}><i className="ti ti-key" style={{fontSize:18,color:"#fff"}}></i></div>
+        <div>
+          <div style={s.topbarTitle}>Protocolo de Chaves</div>
+          <div style={s.topbarSub}>Retirada e devolução</div>
+        </div>
+        <div style={{...s.savedTag, display: saved ? "inline-flex" : "none"}}>
+          <i className="ti ti-check" style={{fontSize:11}}></i> Salvo
+        </div>
+      </div>
+
+      <div style={s.content}>
+
+        {/* Stats */}
+        <div style={s.statsRow}>
+          <StatCard val={keys.length} lbl="Total"       color="#3b82f6" />
+          <StatCard val={avail}       lbl="Disponíveis" color="#22c55e" />
+          <StatCard val={inuse}       lbl="Em uso"      color="#f97316" />
+        </div>
+
+        {/* Keys */}
+        <div style={s.sectionHeader}>
+          <span style={s.sectionTitle}>Chaves</span>
+        </div>
+        <div style={s.keysGrid}>
+          {keys.map(k => (
+            <KeyCard
+              key={k.id} k={k}
+              onCheckout={() => openModal("checkout", { key:k })}
+              onReturn={()   => openModal("return",   { key:k })}
+              onRemove={e  => { e.stopPropagation(); openModal("remove", { removeId:k.id, key:k }); }}
+            />
+          ))}
+        </div>
+
+        <button style={s.addBtn} onClick={() => openModal("add")}>
+          <i className="ti ti-plus"></i> Cadastrar nova chave
+        </button>
+
+        {/* Log */}
+        <div style={s.sectionHeader}>
+          <span style={s.sectionTitle}>Registros</span>
+          <button style={s.ghostBtn} onClick={() => openModal("clear")}>
+            <i className="ti ti-trash" style={{fontSize:13}}></i> Limpar
+          </button>
+        </div>
+        <div style={s.logBox}>
+          <div style={s.logHead}>
+            <span>Chave</span><span>Responsável</span><span>Horário</span><span>Ação</span>
+          </div>
+          {log.length === 0 ? (
+            <div style={s.logEmpty}>
+              <i className="ti ti-clipboard-list" style={{fontSize:28,display:"block",marginBottom:10}}></i>
+              Nenhum registro ainda
+            </div>
+          ) : (
+            [...log].reverse().slice(0,60).map((r,i) => (
+              <div key={i} style={s.logRow}>
+                <span style={s.logKey}>{r.key}</span>
+                <span style={s.logUser}>{r.user || "—"}</span>
+                <span style={s.logTime}>{r.time}</span>
+                <span style={{...s.logChip, ...(r.action==="retirada" ? s.chipR : s.chipD)}}>
+                  {r.action}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* ── Modals ── */}
+      <Modal open={modal==="checkout"} onClose={closeModal}>
+        <div style={s.mTitle}>Retirar: {active?.name}</div>
+        <div style={s.mSub}>Preencha o responsável pela retirada</div>
+        <div style={s.mLabel}>Horário da retirada</div>
+        <div style={s.mVal}>{fmt(new Date())}</div>
+        <div style={s.mLabel}>Retirado por</div>
+        <input ref={inputRef}
+          style={{...s.mInput, ...(inputErr ? s.mInputErr : {})}}
+          placeholder="Nome do responsável..." value={inputVal}
+          onChange={e => { setInputVal(e.target.value); setInputErr(false); }}
+          onKeyDown={e => e.key==="Enter" && doCheckout()} />
+        <div style={s.mActions}>
+          <button style={s.mBtn} onClick={closeModal}>Cancelar</button>
+          <button style={{...s.mBtn,...s.mBtnPrimary}} onClick={doCheckout}>Confirmar retirada</button>
+        </div>
+      </Modal>
+
+      <Modal open={modal==="return"} onClose={closeModal}>
+        <div style={s.mTitle}>Devolver: {active?.name}</div>
+        <div style={s.mSub}>Retirada por: {active?.user} às {active?.since}</div>
+        <div style={s.mLabel}>Horário da devolução</div>
+        <div style={s.mVal}>{fmt(new Date())}</div>
+        <div style={s.mLabel}>Devolvido por</div>
+        <input ref={inputRef}
+          style={{...s.mInput, ...(inputErr ? s.mInputErr : {})}}
+          placeholder="Nome de quem está devolvendo..." value={inputVal}
+          onChange={e => { setInputVal(e.target.value); setInputErr(false); }}
+          onKeyDown={e => e.key==="Enter" && doReturn()} />
+        <div style={s.mActions}>
+          <button style={s.mBtn} onClick={closeModal}>Cancelar</button>
+          <button style={{...s.mBtn,...s.mBtnDanger}} onClick={doReturn}>Confirmar devolução</button>
+        </div>
+      </Modal>
+
+      <Modal open={modal==="add"} onClose={closeModal}>
+        <div style={s.mTitle}>Nova chave</div>
+        <div style={s.mSub}>Cadastre uma nova chave no sistema</div>
+        <div style={s.mLabel}>Nome da chave</div>
+        <input ref={inputRef}
+          style={{...s.mInput, ...(inputErr ? s.mInputErr : {})}}
+          placeholder="Ex: Sala de reunião..." value={inputVal}
+          onChange={e => { setInputVal(e.target.value); setInputErr(false); }}
+          onKeyDown={e => e.key==="Enter" && doAdd()} />
+        <div style={s.mActions}>
+          <button style={s.mBtn} onClick={closeModal}>Cancelar</button>
+          <button style={{...s.mBtn,...s.mBtnPrimary}} onClick={doAdd}>Cadastrar</button>
+        </div>
+      </Modal>
+
+      <Modal open={modal==="remove"} onClose={closeModal}>
+        <div style={s.mTitle}>Remover chave</div>
+        <div style={s.mSub}>Tem certeza que deseja remover "{active?.name}"? Esta ação não pode ser desfeita.</div>
+        <div style={s.mActions}>
+          <button style={s.mBtn} onClick={closeModal}>Cancelar</button>
+          <button style={{...s.mBtn,...s.mBtnDanger}} onClick={doRemove}>Remover</button>
+        </div>
+      </Modal>
+
+      <Modal open={modal==="clear"} onClose={closeModal}>
+        <div style={s.mTitle}>Limpar histórico</div>
+        <div style={s.mSub}>Todos os registros serão apagados permanentemente. As chaves cadastradas serão mantidas.</div>
+        <div style={s.mActions}>
+          <button style={s.mBtn} onClick={closeModal}>Cancelar</button>
+          <button style={{...s.mBtn,...s.mBtnDanger}} onClick={doClear}>Confirmar</button>
+        </div>
+      </Modal>
+
+    </div>
+  );
+}
+
+/* ── StatCard ── */
+function StatCard({ val, lbl, color }) {
+  return (
+    <div style={s.statCard}>
+      <div style={{...s.statVal, color}}>{val}</div>
+      <div style={s.statLbl}>{lbl}</div>
+    </div>
+  );
+}
+
+/* ── KeyCard ── */
+function KeyCard({ k, onCheckout, onReturn, onRemove }) {
+  const inUse = !!k.user;
+  const [hover, setHover] = useState(false);
+  return (
+    <div
+      style={{
+        ...s.keyCard,
+        ...(hover ? s.keyCardHover : {}),
+        borderTop: `3px solid ${inUse ? "#f97316" : "#22c55e"}`
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={inUse ? onReturn : onCheckout}
+    >
+      <button
+        style={{...s.kcRemove, opacity: hover ? 1 : 0}}
+        onClick={onRemove} title="Remover chave"
+      >
+        <i className="ti ti-x"></i>
+      </button>
+      <div style={{
+        ...s.kcIconWrap,
+        background: inUse ? "rgba(249,115,22,.15)" : "rgba(34,197,94,.15)",
+        color: inUse ? "#f97316" : "#22c55e"
+      }}>
+        <i className="ti ti-key" style={{fontSize:20}}></i>
+      </div>
+      <div style={s.kcName} title={k.name}>{k.name}</div>
+      <span style={{...s.kcBadge, ...(inUse ? s.kcBadgeUsed : s.kcBadgeAvail)}}>
+        <i className={`ti ti-${inUse?"lock":"lock-open"}`} style={{fontSize:10}}></i>
+        {inUse ? "Em uso" : "Disponível"}
+      </span>
+      {inUse && (
+        <div style={s.kcUser}>
+          <i className="ti ti-user" style={{fontSize:11}}></i> {k.user}<br/>
+          <i className="ti ti-clock" style={{fontSize:11}}></i> {k.since}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Modal ── */
+function Modal({ open, onClose, children }) {
+  if (!open) return null;
+  return (
+    <div style={s.backdrop} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={s.modal}>
+        <div style={s.mdrag} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ── Styles ── */
+const s = {
+  app:         { fontFamily:"'Inter',sans-serif", background:"#0f1117", color:"#e2e8f0", minHeight:"100vh", paddingBottom:"3rem" },
+  topbar:      { background:"#0f1117", borderBottom:"1px solid #1e2433", padding:"1rem 1.5rem", display:"flex", alignItems:"center", gap:12, position:"sticky", top:0, zIndex:50 },
+  topbarLogo:  { width:38, height:38, background:"#3b82f6", borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 },
+  topbarTitle: { fontSize:17, fontWeight:700, color:"#f1f5f9" },
+  topbarSub:   { fontSize:12, color:"#64748b", marginTop:1 },
+  savedTag:    { marginLeft:"auto", fontSize:11, fontWeight:600, color:"#22c55e", background:"rgba(34,197,94,.12)", padding:"3px 10px", borderRadius:20, display:"inline-flex", alignItems:"center", gap:5 },
+  content:     { padding:"1.5rem", maxWidth:960, margin:"0 auto" },
+
+  statsRow: { display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:"1.75rem" },
+  statCard: { background:"#161b27", border:"1px solid #1e2433", borderRadius:14, padding:"1.1rem 1.25rem" },
+  statVal:  { fontSize:32, fontWeight:700, lineHeight:1, marginBottom:4 },
+  statLbl:  { fontSize:11, fontWeight:500, color:"#64748b", textTransform:"uppercase", letterSpacing:".06em" },
+
+  sectionHeader: { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 },
+  sectionTitle:  { fontSize:13, fontWeight:600, color:"#94a3b8", textTransform:"uppercase", letterSpacing:".07em" },
+
+  keysGrid: { display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:"1.5rem" },
+
+  keyCard:      { background:"#161b27", border:"1px solid #1e2433", borderRadius:14, padding:"1.1rem", cursor:"pointer", position:"relative", overflow:"hidden", userSelect:"none", transition:"background .2s, border-color .2s" },
+  keyCardHover: { background:"#1a2035", borderColor:"#2d3a50" },
+
+  kcRemove:     { position:"absolute", top:8, right:8, width:24, height:24, borderRadius:6, background:"rgba(239,68,68,.12)", border:"1px solid rgba(239,68,68,.2)", color:"#ef4444", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, cursor:"pointer", transition:"opacity .15s" },
+  kcIconWrap:   { width:40, height:40, borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:12 },
+  kcName:       { fontSize:14, fontWeight:600, color:"#f1f5f9", marginBottom:8, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" },
+  kcBadge:      { display:"inline-flex", alignItems:"center", gap:5, fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:20, letterSpacing:".02em" },
+  kcBadgeAvail: { background:"rgba(34,197,94,.15)",  color:"#22c55e" },
+  kcBadgeUsed:  { background:"rgba(249,115,22,.15)", color:"#f97316" },
+  kcUser:       { fontSize:11, color:"#64748b", marginTop:8, lineHeight:1.6 },
+
+  addBtn:   { width:"100%", display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:13, fontSize:13, fontWeight:600, color:"#3b82f6", background:"rgba(59,130,246,.08)", border:"1px dashed rgba(59,130,246,.35)", borderRadius:14, cursor:"pointer", marginBottom:"1.75rem", minHeight:50 },
+  ghostBtn: { display:"flex", alignItems:"center", gap:5, background:"transparent", border:"1px solid #1e2433", borderRadius:8, padding:"5px 11px", fontSize:12, fontWeight:500, color:"#64748b", cursor:"pointer" },
+
+  logBox:  { background:"#161b27", border:"1px solid #1e2433", borderRadius:14, overflow:"hidden" },
+  logHead: { display:"grid", gridTemplateColumns:"1fr 1fr 1fr 88px", gap:8, padding:"10px 16px", background:"#1a2035", fontSize:11, fontWeight:600, color:"#64748b", textTransform:"uppercase", letterSpacing:".06em" },
+  logRow:  { display:"grid", gridTemplateColumns:"1fr 1fr 1fr 88px", gap:8, padding:"11px 16px", fontSize:12, borderTop:"1px solid #1e2433", alignItems:"center" },
+  logKey:  { fontWeight:600, color:"#f1f5f9" },
+  logUser: { color:"#94a3b8" },
+  logTime: { color:"#64748b", fontSize:11 },
+  logChip: { fontSize:10, fontWeight:700, padding:"3px 8px", borderRadius:20, textAlign:"center", letterSpacing:".03em" },
+  chipR:   { background:"rgba(249,115,22,.15)", color:"#f97316" },
+  chipD:   { background:"rgba(34,197,94,.15)",  color:"#22c55e" },
+  logEmpty:{ padding:"3rem", textAlign:"center", color:"#475569", fontSize:13 },
+
+  backdrop: { position:"fixed", inset:0, background:"rgba(0,0,0,.7)", zIndex:100, display:"flex", alignItems:"flex-end", justifyContent:"center" },
+  modal:    { background:"#161b27", border:"1px solid #1e2433", borderRadius:"20px 20px 0 0", padding:"1.5rem 1.25rem", width:"100%", maxWidth:500 },
+  mdrag:    { width:36, height:4, background:"#2d3a50", borderRadius:2, margin:"0 auto 1.25rem" },
+  mTitle:   { fontSize:17, fontWeight:700, color:"#f1f5f9", marginBottom:4 },
+  mSub:     { fontSize:13, color:"#64748b", marginBottom:"1.25rem", lineHeight:1.5 },
+  mLabel:   { fontSize:11, fontWeight:600, color:"#64748b", textTransform:"uppercase", letterSpacing:".06em", marginBottom:5 },
+  mVal:     { fontSize:14, fontWeight:600, color:"#94a3b8", background:"#0f1117", border:"1px solid #1e2433", borderRadius:10, padding:"10px 13px", marginBottom:"1rem" },
+  mInput:   { width:"100%", marginBottom:"1rem", background:"#0f1117", border:"1px solid #2d3a50", borderRadius:10, color:"#f1f5f9", fontFamily:"Inter,sans-serif", fontSize:15, padding:"10px 13px", minHeight:46, outline:"none" },
+  mInputErr:{ borderColor:"#ef4444" },
+  mActions: { display:"flex", gap:10 },
+  mBtn:        { flex:1, padding:13, borderRadius:10, fontFamily:"Inter,sans-serif", fontSize:14, fontWeight:600, cursor:"pointer", border:"1px solid #2d3a50", background:"#1a2035", color:"#94a3b8", minHeight:50 },
+  mBtnPrimary: { background:"#3b82f6", color:"#fff", borderColor:"#3b82f6" },
+  mBtnDanger:  { background:"rgba(239,68,68,.15)", color:"#ef4444", borderColor:"rgba(239,68,68,.3)" },
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
